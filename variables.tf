@@ -5,3 +5,7 @@ variable "admin_user_name" {
 variable admin_user_password {
     type = string
 }
+
+variable datadog_api_key {
+    type = string
+}
