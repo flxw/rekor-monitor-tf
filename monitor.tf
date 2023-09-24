@@ -57,6 +57,14 @@ resource "digitalocean_app" "rekor-monitor" {
         deploy_on_push = true
       }
 
+      log_destination {
+        name = "DD integration"
+        datadog {
+          api_key  = var.datadog_api_key
+          endpoint = "https://http-intake.logs.datadoghq.eu"
+        }
+      }
+
       env {
         key   = "GF_SECURITY_ADMIN_USER"
         value = var.admin_user_name
@@ -134,6 +142,14 @@ resource "digitalocean_app" "rekor-monitor" {
         repo           = "flxw/rekor-monitor"
         branch         = "master"
         deploy_on_push = false
+      }
+
+      log_destination {
+        name = "DD integration"
+        datadog {
+          api_key  = var.datadog_api_key
+          endpoint = "https://http-intake.logs.datadoghq.eu"
+        }
       }
 
       env {
