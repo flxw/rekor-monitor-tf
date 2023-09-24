@@ -1,41 +1,79 @@
-name: terraform-plan
+name: "Terraform Plan"
 
 on:
   pull_request:
 
-permissions:
-  pull-requests: write
+env:
+  TF_CLOUD_ORGANIZATION: "wolfffelix"
+  TF_API_TOKEN: "${{ secrets.TF_API_TOKEN }}"
+  TF_WORKSPACE: "rekor-monitor-tf"
+  CONFIG_DIRECTORY: "./"
 
 jobs:
   terraform-plan:
+    name: "Terraform Plan"
     runs-on: ubuntu-latest
-
-    env:
-      TF_VAR_admin_user_name: ${{ secrets.TF_VAR_ADMIN_USER_NAME }}
-      TF_VAR_admin_user_password: ${{ secrets.TF_VAR_ADMIN_USER_PASSWORD }}
-      TF_VAR_do_token: ${{ secrets.TF_VAR_DO_TOKEN }}
-      TF_VAR_pvt_key: ${{ secrets.TF_VAR_PVT_KEY }}
-
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
-      - uses: actions/checkout@v2
-      - uses: hashicorp/setup-terraform@v1
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Upload Configuration
+        uses: hashicorp/tfc-workflows-github/actions/upload-configuration@v1.0.0
+        id: plan-upload
         with:
-          terraform_wrapper: false
+          workspace: ${{ env.TF_WORKSPACE }}
+          directory: ${{ env.CONFIG_DIRECTORY }}
+          speculative: true
 
-      - run: terraform init
-      - run: terraform plan -refresh-only
-      - run: terraform plan -out terraform.plan
-
-      # generate plain output
-      - run: terraform show -no-color terraform.plan > terraform.text
-
-      # generate json output
-      - run: terraform show -json terraform.plan > terraform.json
-
-      - uses: ahmadnassri/action-terraform-report@v3
+      - name: Create Plan Run
+        uses: hashicorp/tfc-workflows-github/actions/create-run@v1.0.0
+        id: plan-run
         with:
-          # tell the action the plan outputs
-          terraform-text: ${{ github.workspace }}/terraform.text
-          terraform-json: ${{ github.workspace }}/terraform.json
-          remove-stale-reports: true
-          show-diff: true
+          workspace: ${{ env.TF_WORKSPACE }}
+          configuration_version: ${{ steps.plan-upload.outputs.configuration_version_id }}
+          plan_only: true
+
+      - name: Get Plan Output
+        uses: hashicorp/tfc-workflows-github/actions/plan-output@v1.0.0
+        id: plan-output
+        with:
+          plan: ${{ fromJSON(steps.plan-run.outputs.payload).data.relationships.plan.data.id }}
+
+      - name: Update PR
+        uses: actions/github-script@v6
+        id: plan-comment
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // 1. Retrieve existing bot comments for the PR
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const botComment = comments.find(comment => {
+              return comment.user.type === 'Bot' && comment.body.includes('Terraform Cloud Plan Output')
+            });
+            const output = `#### Terraform Cloud Plan Output
+               \`\`\`
+               Plan: ${{ steps.plan-output.outputs.add }} to add, ${{ steps.plan-output.outputs.change }} to change, ${{ steps.plan-output.outputs.destroy }} to destroy.
+               \`\`\`
+               [Terraform Cloud Plan](${{ steps.plan-run.outputs.run_link }})
+               `;
+            // 3. Delete previous comment so PR timeline makes sense
+            if (botComment) {
+              github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+              });
+            }
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
